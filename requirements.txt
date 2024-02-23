@@ -2,3 +2,4 @@ wpilib
 photonlibpy
 numpy
 ntcore
+math
