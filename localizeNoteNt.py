@@ -1,4 +1,4 @@
-from photonlibpy.photonCamera import PhotonCamera
+import photonlibpy as pv
 import numpy as np
 import ntcore as nt
 import math
@@ -94,7 +94,9 @@ def turnBearingDistanceToXYZ(bearing, range, cameraIndex):
     
     print(f"Relative to camera: x {camX} z {camZ}")
 
-    relativeMatrix = np.array([[camX], [0], [camZ]])  # y is 0 because on the ground
+    relativeMatrix = np.array([[camX], 
+                               [0], 
+                               [camZ]])  # y is 0 because on the ground
     
     # Transform coordinates using the final transformation matrix
     finalMatrix = finalTransMatrix @ relativeMatrix
@@ -133,10 +135,10 @@ def writeToNt(accumulatedResults):
     
 # start waiting for photonvision camera updates and put on network tables
 def startLoop():
-    camera1 = PhotonCamera("testCam")
-    camera2 = PhotonCamera("testCam")
-    camera3 = PhotonCamera("testCam")
-    camera4 = PhotonCamera("testCam")
+    camera1 = pv.PhotonCamera("testCam")
+    camera2 = pv.PhotonCamera("testCam")
+    camera3 = pv.PhotonCamera("testCam")
+    camera4 = pv.PhotonCamera("testCam")
     cams = [camera1,camera2,camera3,camera4]
     lastTimeStamps = [-100,-100,-100,-100]
     lastResults = [[],[],[],[]]
@@ -148,8 +150,10 @@ def startLoop():
         for i in range(len(cams)):
             currCam = cams[i]
             latestResult = currCam.getLatestResult()
-            latestTimeStamp = latestResult.getTimestamp()
-            prevTimeStamp = lastTimeStamps[i]
+            if latestResult.hasTargets():
+                targetList = latestResult().getTargets()
+                sorted(targetList,key=lambda target : target.getArea())
+            
             if latestTimeStamp != prevTimeStamp:
                 hasChanged = True
                 # new result
@@ -165,4 +169,7 @@ def startLoop():
                 
 
 if __name__ == "main":
-    startLoop()
+    #startLoop()
+    pass
+x,y,z = turnBearingDistanceToXYZ(math.pi/6,10,0)
+print(f"X: {x} Y: {y} Z: {z}")
