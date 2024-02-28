@@ -1,5 +1,4 @@
 wpilib
 photonlibpy
 numpy
-ntcore
-math
+robotpy==2024.3.1.0

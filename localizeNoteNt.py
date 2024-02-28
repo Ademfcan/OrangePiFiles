@@ -2,16 +2,17 @@ import photonlibpy as pv
 import numpy as np
 import ntcore as nt
 import math
+import socket
 
 instance = nt.NetworkTableInstance.getDefault()
 instance.startClient4("Braindance Bearing")
 instance.setServerTeam(488)
 table = instance.getTable("SmartDashboard")
 writeTable = table.getSubTable("Braindance")
-confTargets = writeTable.getDoubleArrayTopic("Target Confidence").publish()
-xTargets = writeTable.getDoubleArrayTopic("Target X").publish()
-yTargets = writeTable.getDoubleArrayTopic("Target Y").publish()
-zTargets = writeTable.getDoubleArrayTopic("Target Z").publish()
+# find way to get confidence from photonvision
+#confTargets = writeTable.getDoubleArrayTopic("Target Confidence").publish()
+xyz = writeTable.getDoubleArrayTopic("Target Coordinate pairs").publish()
+
 
 
 VRES = 720
@@ -32,36 +33,21 @@ def calculateDistance(knownSize, currentSizePixels, focalLength):
 
 
 def calcDefOff(fov, res, pixelDiff):
-    radperPixel = fov / res
-    return pixelDiff * radperPixel
+    fovperPixel = fov / res
+    return pixelDiff * fovperPixel
 
-def processTarget(results):
-    if results != None and results[0] != None:
-        boxes = results[0].boxes.xywh.cpu()
-        confs = results[0].boxes.conf.cpu()
-        targets = []
-        for box, conf in zip(boxes, confs):
-            x,y,w,h = box
-            
 
-            diffX = x - MIDH
-            bearingRad = calcDefOff(HFOVRAD, HRES, diffX)
-            noteRange = calculateDistance(NOTEKNOWNSIZE,w,FX)
-            targetX,targetY,targetZ = turnBearingDistanceToXYZ(bearingRad,noteRange)
-            targets.append([conf,targetX,targetY,targetZ])
-        
-
-    return targets
-
-offsetsX = [14.25,-14.25,-13,13]
-offsetsZ = [13.84,13.84,-13.24,-13.24]
-rotXOffset = [80,280,188,172]
+offsetsX = [-13.887,13.887,-12.957,12.957]
+offsetsZ = [-13.779,-13.779,12.86,12.86]
+offsetsHeight = [6.628,6.628,10.540,10.540]
+rotXOffset = [280,80,188,172]
 rotDownOffset = [-3,-3,-3.77,-3.77]
 
 
 def turnBearingDistanceToXYZ(bearing, range, cameraIndex):
     dx = offsetsX[cameraIndex]
     dz = offsetsZ[cameraIndex]
+    dHeight = offsetsHeight[cameraIndex]
     print(f"dx {dx} dz {dz}")
     a = math.radians(rotXOffset[cameraIndex])
     b = math.radians(rotDownOffset[cameraIndex])
@@ -78,7 +64,7 @@ def turnBearingDistanceToXYZ(bearing, range, cameraIndex):
                             [-math.sin(b), 0, math.cos(b)]])
     
     translationMatrix = np.array([[1,0,0,dx],
-                                 [0,1,0,0],
+                                 [0,1,0,offsetsHeight],
                                  [0,0,1,dz],
                                  [0,0,0,1]])
     
@@ -111,65 +97,69 @@ def turnBearingDistanceToXYZ(bearing, range, cameraIndex):
     finalZ = actualFinalMatrix[2][0]
     return finalX,finalY,finalZ
 
-def writeToNt(accumulatedResults):
-    confs = []
-    xs = []
-    ys = []
-    zs = []
-    for target in accumulatedResults:
-        conf = target[0] 
-        confs.append(conf)
-        x = target[1]
-        xs.append(x)
-        y = target[2]
-        ys.append(y)
-        z = target[3]
-        zs.append(z)
-    confTargets.set(confs)
-    xTargets.set(xs)
-    yTargets.set(ys)
-    zTargets.set(zs)
+# uneccesary function unless we also add confidences
+# def writeToNt(accumulatedResults):
+#     confs = []
+#     xyzTriplets = []
+#     for target in accumulatedResults:
+#         conf = target[0] 
+#         confs.append(conf) 
+#     xyz.set(xyzTriplets)
+    
 
 
 
     
 # start waiting for photonvision camera updates and put on network tables
 def startLoop():
-    camera1 = pv.PhotonCamera("testCam")
-    camera2 = pv.PhotonCamera("testCam")
-    camera3 = pv.PhotonCamera("testCam")
-    camera4 = pv.PhotonCamera("testCam")
-    cams = [camera1,camera2,camera3,camera4]
-    lastTimeStamps = [-100,-100,-100,-100]
-    lastResults = [[],[],[],[]]
+    name = socket.getHostName()
+    cameraIndex = None
+    match name:
+        case "FL":
+            cameraIndex = 0
+        case "FR":
+            cameraIndex = 1
+        case "RL":
+            cameraIndex = 2
+        case "RR":
+            cameraIndex = 3
+    camera = pv.PhotonCamera(f"Camera{name}")
     
     
     while True:
         # todo get actual results
-        hasChanged = False
-        for i in range(len(cams)):
-            currCam = cams[i]
-            latestResult = currCam.getLatestResult()
-            if latestResult.hasTargets():
-                targetList = latestResult().getTargets()
-                sorted(targetList,key=lambda target : target.getArea())
-            
-            if latestTimeStamp != prevTimeStamp:
-                hasChanged = True
-                # new result
-                targets = processTarget(latestResult)
-                lastResults[i] = targets
         
-        if hasChanged:
-            AccumulatedResults = []
-            for result in lastResults:
-                AccumulatedResults.append(result)
-            writeToNt(AccumulatedResults)
-
+        latestResult = camera.getLatestResult()
+        if latestResult.hasTargets():
+            hasChanges = True
+            targetsYXZ = []
+            targetList = latestResult().getTargets()
+            # sorting targets based on what takes up the most areas
+            sortedList = sorted(targetList,key=lambda target : target.getArea())
+            
+            for target in sortedList:
+                # corner coordiates are unsorted so need to extract width and height
+                corners = target.getDetectedCorners()
+                minX = min(x for x, y in corners)
+                minY = min(y for x, y in corners)
+                maxX = max(x for x, y in corners)
+                maxY = max(y for x, y in corners)
+                widthX = maxX-minX
+                heightY = maxY-minY
+                centerX = minX + widthX/2.0
+                # center y not needed right now
+                centerY = minY + heightY/2.0
+                distance = calculateDistance(NOTEKNOWNSIZE,widthX,FX)
+                bearing = calcDefOff(HFOVRAD,HRES,centerX-MIDH)
+                x,y,z = turnBearingDistanceToXYZ(bearing,distance,cameraIndex)
+                targetsYXZ.append(f"{y*-1},{x},{z}")
+            xyz.set(targetsYXZ)
+        else:
+            xyz.set([])
+        # if this takes up to much cpu might want to add a sleep
+        
                 
 
 if __name__ == "main":
-    #startLoop()
-    pass
-x,y,z = turnBearingDistanceToXYZ(math.pi/6,10,0)
-print(f"X: {x} Y: {y} Z: {z}")
+    startLoop()
+    
